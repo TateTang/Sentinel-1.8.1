@@ -17,7 +17,6 @@ package com.alibaba.csp.sentinel.dashboard.controller.gateway;
 
 import com.alibaba.csp.sentinel.dashboard.auth.AuthAction;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService;
-import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiDefinitionEntity;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiPredicateItemEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
@@ -26,10 +25,13 @@ import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.AddApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.ApiPredicateItemVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.UpdateApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.repository.gateway.InMemApiDefinitionStore;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.util.StringUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -53,8 +55,16 @@ public class GatewayApiController {
     @Autowired
     private InMemApiDefinitionStore repository;
 
+    //@Autowired
+    //private SentinelApiClient sentinelApiClient;
+
     @Autowired
-    private SentinelApiClient sentinelApiClient;
+    @Qualifier("getWayApiNacosProvider")
+    private DynamicRuleProvider<List<ApiDefinitionEntity>> apiProvider;//添加我们自己写的ruleProvider
+
+    @Autowired
+    @Qualifier("getWayApiNacosPublisher")
+    private DynamicRulePublisher<List<ApiDefinitionEntity>> apiPublisher;//添加我们自己写的rulePublisher
 
     @GetMapping("/list.json")
     @AuthAction(AuthService.PrivilegeType.READ_RULE)
@@ -71,7 +81,8 @@ public class GatewayApiController {
         }
 
         try {
-            List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+            //List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+            List<ApiDefinitionEntity> apis = apiProvider.getRules(app);
             repository.saveAll(apis);
             return Result.ofSuccess(apis);
         } catch (Throwable throwable) {
@@ -253,8 +264,24 @@ public class GatewayApiController {
         return Result.ofSuccess(id);
     }
 
+    //private boolean publishApis(String app, String ip, Integer port) {
+    //    List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
+    //    return sentinelApiClient.modifyApis(app, ip, port, apis);
+    //}
+
+    /**
+     * 我们自己的publishRules ，将规则推送到 nacos
+     * ip port无用的
+     */
     private boolean publishApis(String app, String ip, Integer port) {
-        List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.modifyApis(app, ip, port, apis);
+        List<ApiDefinitionEntity> rules = repository.findAllByApp(app);
+        try {
+            apiPublisher.publish(app, rules);
+            return true;
+        } catch (Exception e) {
+            logger.error("publish rules error!");
+            e.printStackTrace();
+            return false;
+        }
     }
 }
